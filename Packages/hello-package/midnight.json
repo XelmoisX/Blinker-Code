@@ -1,0 +1,21 @@
+{
+    "name": "Midnight",
+    "author": "tu nombre",
+    "ui": {
+        "bg": "#0b0f1a",
+        "panel": "#111726",
+        "editor": "#0f1422",
+        "select": "#26325a",
+        "line_hl": "#151c30",
+        "bracket": "#3a4a7a",
+        "find": "#5a4a1a",
+        "find_current": "#8a6a1a",
+        "error": "#ff5370",
+        "accent": "#82aaff",
+        "muted": "#6b7694",
+        "fg": "#c8d3f5"
+    },
+    "syntax": {
+        "Comment": "#6b7694"
+    }
+}

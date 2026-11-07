@@ -1,0 +1,572 @@
+=====================================================================
+ BLINKER CODE (Blinker Editor) - GUIA COMPLETA
+=====================================================================
+
+Todo lo que dice este documento sale de leer tu codigo (no de adivinar).
+Los ejemplos de las secciones 5, 6 y 7 los probe de verdad (se cargan y
+funcionan). Los numeros de linea son de la version LIMPIA (Blinker_Editor_limpio.zip).
+
+INDICE
+  1. Que es y como arranca
+  2. Mapa de archivos
+  3. Archivo por archivo
+  4. Carpetas y archivos de datos
+  5. LIBS (librerias de autocompletado) - explicacion y ejemplo
+  6. PACKAGES (paquetes) - explicacion y ejemplos
+  7. Donde poner links predeterminados en "Install Package"
+  8. Que elimine / corregi (y que deje a proposito)
+  9. Recomendaciones para despues
+
+
+=====================================================================
+ 1. QUE ES Y COMO ARRANCA
+=====================================================================
+Un editor de codigo tipo Sublime Text / VS Code escrito en Python con tkinter.
+No usa librerias externas: solo Python 3 con tkinter (en Linux: sudo apt install python3-tk).
+
+    python main.py
+
+Tiene: pestanas, arbol de carpetas, resaltado de sintaxis, autocompletado,
+errores en vivo con servidores LSP, Build/Run con panel de salida, paleta de
+comandos (Ctrl+Shift+P), temas, paquetes instalables desde GitHub y
+recuperacion de archivos sin guardar si el programa se cierra mal.
+
+Regla de diseno que sigue todo el proyecto: main.py es la ventana (usa tkinter);
+casi todo lo demas son modulos "puros" SIN tkinter, y por eso se pueden
+probar o reutilizar solos (highlight, build, packages, themes, libs, lsp,
+suggest, recovery). Los que SI usan tkinter: main, ui, icons, suggest_ui.
+
+
+=====================================================================
+ 2. MAPA DE ARCHIVOS
+=====================================================================
+Blinker_Editor/
+  main.py                  La aplicacion completa (ventana, editor, menus, terminal...)
+  highlight.py             Resaltado de sintaxis (colores por lenguaje)
+  suggest.py               Sugerencias: keywords, funciones integradas, snippets, palabras del archivo
+  suggest_ui.py            El popup grafico de sugerencias (iconos, lista, resaltado de letras)
+  lsp.py                   Cliente LSP (errores/autocompletado reales con pyright, clangd...)
+  libs.py                  Librerias de autocompletado en .json  (seccion 5)
+  packages.py              Gestor de paquetes desde GitHub + la API que reciben (seccion 6)
+  themes.py                Temas de color en .json
+  build.py                 Comandos de Build/Run por lenguaje
+  icons.py                 Iconos del arbol de carpetas y pestanas
+  ui.py                    Colores de la interfaz + estilo oscuro de ttk
+  recovery.py              Respaldos de archivos sin guardar + sesion
+  blinker_config.json      Config: archivos/carpetas recientes, tema, LSP on/off
+  plantilla-para-libs.json Plantilla de manifest de un paquete que trae una libreria
+  icons/                   PNG de archivos (python.png, folder.png...)
+  icons/suggest/           PNG del popup de sugerencias (function.png, class.png...)
+  Libraries/basic.json     Libreria de ejemplo (un BASIC) que se carga sola
+  Packages/                Aqui se instalan los paquetes
+    packages.json            registro de lo instalado (lo escribe el editor)
+    sdl-cpp-practice/        paquete de ejemplo: compilar C++ con SDL2 con F6
+  Themes/                  (no venia en tu zip) temas .json del usuario; se crea al usarlos
+
+Quien importa a quien (main.py los usa a todos):
+  highlight, build, ui, icons, packages, lsp, recovery, suggest, suggest_ui, themes, libs
+  libs.py -> usa suggest.py (para construir las sugerencias)
+  suggest_ui.py -> usa ui.py (colores)
+  packages.py -> carga highlight.py y build.py cuando un paquete los pide
+
+
+=====================================================================
+ 3. ARCHIVO POR ARCHIVO
+=====================================================================
+
+---------------------------------------------------------------------
+ main.py  (3230 lineas, el corazon)
+---------------------------------------------------------------------
+Arriba (lineas 1-80): imports, CONSTANTES (rutas de Packages/Recovery/Themes/
+Libraries, carpetas ignoradas, comentarios por lenguaje, pares de parentesis),
+DEFAULT_PACKAGES (linea 63, ver seccion 7) y 2 funciones chicas de ayuda.
+
+Clases, en orden:
+
+  Terminal (l.90-360)  El panel "Output" de abajo. Ejecuta comandos con
+      subprocess, lee la salida en un hilo (threading + queue) para no congelar
+      la ventana, deja ESCRIBIR en el programa que corre (stdin), guarda
+      historial, limpia los codigos de color ANSI, detecta la codificacion
+      y puede matar el proceso (Shift+F5).
+
+  AutoScrollbar (l.366)  Barra de desplazamiento que se oculta si no hace falta.
+
+  LineNumbers (l.376)  Los numeros de linea (un Canvas que se redibuja).
+
+  FindBar (l.424-632)  Buscar / Reemplazar (Ctrl+F / Ctrl+H). Opciones:
+      expresion regular, mayusculas, palabra completa; F3 / Shift+F3 para
+      siguiente/anterior; "Reemplazar" y "Reemplazar todo".
+
+  CodeEditor (l.638-1501)  UN editor (una pestana). Contiene:
+      - el Text de tkinter + numeros de linea + FindBar
+      - resaltado: se programa con schedule_highlight() y llama a highlight.py
+      - editar: auto-cerrar parentesis/comillas, auto-indentar (on_return),
+        Tab/Shift+Tab, duplicar/borrar/mover lineas, comentar (Ctrl+/),
+        seleccionar siguiente ocurrencia (Ctrl+D), resaltar parentesis pareja
+      - deshacer/rehacer (undo/redo) y group() para que una accion compuesta
+        sea UN solo paso de deshacer
+      - LSP: lsp_open / lsp_sync / set_diagnostics (subrayado de errores y tooltips)
+      - autocompletado: request_completion junta 3 fuentes (LSP + libs + suggest),
+        _rank las ordena, _comp_show muestra el popup, comp_accept inserta
+        (incluye snippets con $0 = donde queda el cursor)
+
+  FileTree (l.1510-1816)  El arbol de carpetas de la izquierda: carga perezosa
+      (solo lee una carpeta al abrirla), iconos, menu clic derecho: nuevo
+      archivo/carpeta, renombrar en el lugar (F2), borrar, mostrar en el explorador.
+
+  fuzzy() (l.1822) y Palette (l.1835-1915)  La paleta flotante que usan Ctrl+P,
+      Ctrl+Shift+P, Ctrl+G, Install Package, etc. fuzzy() puntua coincidencias
+      "con letras en orden" (escribes "ipk" y encuentra "Install Package").
+
+  main (l.1927-3227)  La ventana principal. Grupos de metodos:
+      - config: load_config / save_config / add_recent  (blinker_config.json)
+      - frontend / gestor_menu: arma la interfaz y los menus
+      - atajos: add_shortcut / attach_shortcuts (los paquetes tambien los usan)
+      - pestanas: add_editor, close_tab, reopen_closed (Ctrl+Shift+T), update_tab...
+      - archivos: open_file/open_folder/open_path, save_*, recientes
+      - build / stop_build: guarda, detecta lenguaje, pide el comando a build.py
+        y lo ejecuta en Terminal
+      - vista: sidebar, output, wrap, zoom
+      - temas: set_theme / select_theme / export_theme
+      - libs y LSP: reload_libs, _lsp_poll (cada ~50 ms), diagnosticos, Problems
+      - recuperacion: recovery_snapshot + restore_session (al abrir, devuelve tus pestanas)
+      - paquetes: load_package, install_package, do_install, upgrade_package,
+        remove_package, list_packages
+      - run_task: ejecuta algo de red en un hilo y avisa al terminar (asi la
+        ventana no se congela mientras descarga)
+      - goto_anything: Ctrl+P (archivos del proyecto / lineas)
+
+---------------------------------------------------------------------
+ highlight.py  (432 lineas)
+---------------------------------------------------------------------
+Convierte texto en rangos de color. NO usa tkinter. Piezas:
+  THEME_COLORS     un color por "tag" (Keyword, String, Comment, Function...)
+  KEYWORDS         palabras de cada lenguaje por categoria (control, funcion, clase, tipo...)
+  make_rules()     arma las reglas (tag, regex) de un lenguaje tipo C
+  register_language(nombre, reglas, nombre_visible, extensiones)  agrega un lenguaje
+  highlight_ranges(texto, lenguaje)  -> (tag, inicio, fin) que main.py pinta
+Lenguajes incluidos: Python, C/C++, JavaScript, TypeScript, Java, C#, Rust, Go,
+Lua, SQL, Bash, JSON, HTML, CSS (+ Text).
+
+---------------------------------------------------------------------
+ suggest.py  (339 lineas)
+---------------------------------------------------------------------
+Autocompletado "sin servidor": keywords, funciones integradas, snippets y las
+palabras que ya estan en tu archivo. Es sensible al contexto (context()): no
+sugiere dentro de comentarios ni strings, ni despues de ".", "->", "::", ni
+cuando estas nombrando algo (def, class, fn...). Orden de prioridad: z1 keywords,
+z2 integradas, z3 snippets, z4 palabras del archivo.
+
+---------------------------------------------------------------------
+ suggest_ui.py  (286 lineas)
+---------------------------------------------------------------------
+El popup de sugerencias (dibujado en un Canvas): iconos por tipo, letras
+coincidentes resaltadas, detalle y pie de ayuda; escala con el zoom.
+Los iconos se leen de icons/suggest/<nombre>.png (si falta uno dibuja uno de color).
+
+---------------------------------------------------------------------
+ lsp.py  (448 lineas)
+---------------------------------------------------------------------
+Cliente del Language Server Protocol: habla JSON-RPC por stdin/stdout con un
+programa externo que entiende el lenguaje. Da errores reales y autocompletado
+real. Servidores que busca en el PATH (usa el primero que encuentre):
+  python: pyright / basedpyright / pylsp / jedi      c/c++: clangd
+  javascript y typescript: typescript-language-server  rust: rust-analyzer   go: gopls
+Clases: LSPClient (un servidor) y LSPManager (uno por lenguaje/proyecto).
+Todo lo que llega del servidor se procesa en poll() (el editor lo llama cada
+50 ms), asi no hace falta "locks" con tkinter. Si no tienes ningun servidor
+instalado, el editor sigue funcionando con suggest.py + libs.py.
+
+---------------------------------------------------------------------
+ libs.py  (298 lineas)  -> ver seccion 5
+---------------------------------------------------------------------
+---------------------------------------------------------------------
+ packages.py  (366 lineas)  -> ver seccion 6
+---------------------------------------------------------------------
+
+---------------------------------------------------------------------
+ themes.py  (147 lineas)
+---------------------------------------------------------------------
+Temas de color en .json (colores #rrggbb). Salen de: "Default" (integrado),
+Themes/*.json, o de un paquete cuyo blinker-package.json tenga
+"themes": ["themes/midnight.json"]. ThemeManager.apply() modifica EN EL LUGAR
+los diccionarios UI y THEME_COLORS, por eso todos los modulos ven los colores
+nuevos sin reiniciar. Lo que un tema no define se toma de Default.
+View > Export Current Theme crea un .json con TODAS las claves para que lo edites.
+
+Formato:
+    {"name": "Midnight", "author": "tu nombre",
+     "ui":     {"bg": "#0b0f1a", "editor": "#0f1422"},
+     "syntax": {"Comment": "#6b7694", "Keyword": "#c792ea"}}
+
+---------------------------------------------------------------------
+ build.py  (56 lineas)
+---------------------------------------------------------------------
+Tabla "lenguaje -> comando". Variables: {file} {dir} {name} {stem} {out} {python}.
+Incluidos: python, javascript (node), java, c/c++ (gcc/g++), rust, go, lua, bash.
+Agregar uno:  register_build("kotlin", 'kotlinc "{file}" -d "{out}.jar"')
+(la extension tiene prioridad sobre el lenguaje: .c usa gcc aunque sea "cpp").
+
+---------------------------------------------------------------------
+ icons.py  (124 lineas)  y  ui.py  (59 lineas)
+---------------------------------------------------------------------
+icons.py: extension -> nombre de icono -> icons/<nombre>.png. Si el PNG no
+existe dibuja uno de relleno de color. Cachea las imagenes (tkinter las borra si
+no guardas la referencia). Reduce solo PNG de 32x32/48x48 a 16x16.
+ui.py: el diccionario UI (colores de la interfaz) y apply_dark_style() que
+pinta de oscuro las pestanas, arbol y scrollbars de ttk.
+
+---------------------------------------------------------------------
+ recovery.py  (70 lineas)
+---------------------------------------------------------------------
+Guarda cada cierto tiempo (a) un respaldo .bak de cada archivo sin guardar y
+(b) session.json con las pestanas abiertas. Escribe de forma "atomica"
+(archivo temporal + os.replace) para que un corte de luz no deje archivos a
+medias. Al abrir el editor, restore_session() te devuelve todo.
+
+---------------------------------------------------------------------
+ Packages/sdl-cpp-practice  (ejemplo de paquete real)
+---------------------------------------------------------------------
+main.py: agrega a la paleta "SDL: Build & Run current file" (F6), "SDL: Open
+examples folder" y "SDL: Create .clangd". Busca SDL2 con pkg-config/sdl2-config
+o con la variable SDL2_DIR (Windows+MinGW). examples/*.cpp son 3 ejemplos;
+README.md explica como instalar SDL2; CMakeLists.txt es opcional.
+
+
+=====================================================================
+ 4. CARPETAS Y ARCHIVOS DE DATOS
+=====================================================================
+  blinker_config.json  lo escribe el editor (recientes, tema, LSP). Se puede borrar.
+  Recovery/            lo crea el editor solo (.bak + session.json). Se puede borrar.
+  Packages/packages.json  registro de lo que instalaste desde GitHub.
+  Libraries/*.json     librerias de autocompletado sueltas (seccion 5).
+  Themes/*.json        temas tuyos.
+  icons/               iconos. Nombres que el editor busca: folder, folder_open, file, python,
+                       javascript, typescript, java, c, cpp, header, csharp, rust, go, lua, sql,
+                       shell, json, html, css, markdown, text, log, image, config, archive, pdf, exe
+                       (y rubi para .rubi). Los que faltan usan el dibujo de relleno.
+
+
+=====================================================================
+ 5. LIBS - LIBRERIAS DE AUTOCOMPLETADO
+=====================================================================
+QUE SON
+Un "lib" es un archivo .json que le ENSENA al editor las funciones, palabras
+clave, constantes, tipos y snippets de un lenguaje o de una libreria (por
+ejemplo tu BASIC, o Love2D). El editor las muestra en el popup de
+autocompletado. No ejecutan nada: son solo datos. Es un "mini LSP sin servidor".
+
+DONDE SE PONEN (dos opciones)
+  A) Sueltas:   Libraries/mi_lib.json        (junto a main.py)
+  B) Dentro de un paquete, y se declaran en su blinker-package.json:
+         "libraries": ["libs/mi_lib.json"]
+Despues:  Tools > Reload Libraries   y   Tools > Show Loaded Libraries (para ver si cargo).
+Si hay un error en el .json aparece en el panel Output como [Libs] ...
+IMPORTANTE: libs.py solo lee los .json de Libraries/ que esten SUELTOS ahi
+(no dentro de subcarpetas); por eso borre Libraries/Love2D/ (nunca se cargaba).
+
+CUANDO SE USA UNA LIB
+Cuando el archivo abierto coincide por "languages" (id del lenguaje) o por
+"extensions". Las sugerencias de la lib salen ANTES que las keywords normales.
+
+EJEMPLO COMPLETO (probado: "OK: MiLib - 14 elementos")
+Guardalo como  Libraries/mi_lib.json
+
+{
+  "name": "MiLib",
+  "languages": ["basic"],
+  "extensions": [".bas"],
+  "comment": "'",
+  "keywords":  ["If", "Then", "Else", "For", "Next"],
+  "constants": ["True", "False"],
+  "types":     ["Integer", "String"],
+  "functions": [
+    "OpenWindow(title, w, h, fullscreen, vsync) = OpenWindow(\"Hola\", 640, 480, 0, 0) # Abre una ventana",
+    "CloseWindow()",
+    "Cls",
+    {"name": "Wait", "params": ["ms"], "doc": "Pausa en milisegundos", "insert": "Wait(1000)"}
+  ],
+  "snippets": [
+    {"trigger": "forn", "body": "For i = 1 To $0\n\t\nNext", "detail": "Bucle For"}
+  ]
+}
+
+COMO SE LEE CADA CAMPO
+  name        nombre que se ve en "Show Loaded Libraries"
+  languages   ids de lenguaje del editor (en minuscula). Pon este O "extensions"
+  extensions  extensiones de archivo a las que aplica
+  comment     prefijo de comentario para Ctrl+/ en ese lenguaje
+  keywords / constants / types   listas de palabras (sin espacios)
+  functions   dos formatos:
+      TEXTO corto:   "Nombre(param1, param2) = texto_a_insertar # documentacion"
+          - "(params)" es opcional. Sin parentesis => se inserta solo el nombre (Cls)
+          - "= texto" es opcional: es lo que se escribe al aceptar. Si lo omites se
+            inserta  Nombre(|)  con el cursor dentro de los parentesis
+          - "# doc" es opcional: se muestra junto a la firma
+      OBJETO:  {"name": "...", "params": [...], "doc": "...", "insert": "..."}
+  snippets    {"trigger": lo que escribes, "body": lo que se inserta, "detail": descripcion}
+              en body:  \n = salto de linea,  \t = tabulador,  $0 = donde queda el cursor
+
+HERRAMIENTAS DE LINEA DE COMANDOS (en la carpeta del editor)
+  python libs.py check Libraries/mi_lib.json       -> valida el archivo
+  python libs.py from-text api.txt "RCBasic" basic .bas > rcbasic.json
+      (api.txt: una funcion por linea con la sintaxis corta; las lineas que
+       empiezan con ; se ignoran. Util para convertir una lista de funciones
+       que copiaste de una documentacion)
+
+SERVIDOR LSP DENTRO DE UN PAQUETE (opcional, avanzado)
+Un paquete puede traer su propio servidor LSP (programa que habla JSON-RPC):
+  "lsp": {"language": "basic", "extensions": [".bas"],
+          "command": ["{python}", "{pkg}/server.py"]}
+{python} = el Python del editor; {pkg} = carpeta del paquete.
+
+
+=====================================================================
+ 6. PACKAGES - PAQUETES
+=====================================================================
+QUE SON
+Un paquete es un repositorio de GitHub (o una carpeta dentro de Packages/) con
+un archivo  blinker-package.json  en la raiz. Un paquete puede traer:
+  - CODIGO Python ("main") que agrega comandos a la paleta, atajos, lenguajes
+    de resaltado y sistemas de Build
+  - TEMAS ("themes")
+  - LIBRERIAS de autocompletado ("libraries")
+  - un servidor LSP ("lsp")
+Un repo SIN manifest tambien se instala, pero solo guarda archivos.
+
+Diferencia con las libs:  LIB = solo datos de autocompletado (un .json).
+                          PAQUETE = una carpeta completa que puede incluir libs,
+                          temas y codigo que se ejecuta.
+
+CAMPOS DEL blinker-package.json
+  name, version, description, author   informativos
+  main         archivo .py con register(api)   (opcional)
+  libraries    lista de .json de autocompletado (rutas dentro del paquete)
+  themes       lista de .json de temas
+  lsp          servidor de lenguaje (ver seccion 5)
+
+EJEMPLO 1 - paquete minimo (probado: carga y el comando funciona)
+Estructura (repo de GitHub):
+    hola-paquete/
+      blinker-package.json
+      main.py
+
+blinker-package.json:
+{
+  "name": "hola-paquete",
+  "version": "1.0.0",
+  "description": "Mi primer paquete",
+  "author": "tu-usuario",
+  "main": "main.py"
+}
+
+main.py:
+def register(api):
+    api.add_command("Hola: Saludar", lambda: api.message("Hola desde mi paquete!"))
+    api.add_shortcut("<Control-Shift-H>", lambda: api.message("Hola!"))
+
+def unregister(api):      # opcional: se llama al desinstalar / actualizar
+    pass
+
+Despues: sube el repo a GitHub, ponle el topic  blinker-package  (para que salga
+en las busquedas) y en el editor: Packages > Install Package... > escribe
+usuario/repo. Veras "Hola: Saludar" en Ctrl+Shift+P.
+
+LO QUE OFRECE EL OBJETO  api  (clase PackageAPI en packages.py)
+  api.add_command("Titulo", funcion)      agrega un comando a la paleta
+  api.add_shortcut("<Control-Shift-H>", funcion)   atajo de teclado
+  api.editor()                            el CodeEditor de la pestana activa (o None)
+  api.message("texto", error=False)       escribe en el panel Output
+  api.highlight                           modulo highlight.py (register_language, make_rules...)
+  api.build                               modulo build.py (register_build)
+  api.app                                 la ventana principal (usala con cuidado)
+  api.path                                carpeta del paquete (para leer sus archivos)
+  api.name                                nombre del paquete
+
+EJEMPLO 2 - paquete que agrega un LENGUAJE completo (resaltado + autocompletado + Build)
+(probado: resalta, devuelve el comando de build correcto)
+    mi-basic/
+      blinker-package.json
+      main.py
+      libs/basic.json          <- el ejemplo de la seccion 5
+
+blinker-package.json:
+{
+  "name": "mi-basic",
+  "version": "0.1.0",
+  "description": "Soporte para mi BASIC",
+  "author": "tu-usuario",
+  "main": "main.py",
+  "libraries": ["libs/basic.json"]
+}
+
+main.py:
+def register(api):
+    h = api.highlight
+    kw = h._kw(control="If Then Else ElseIf For To Next While Wend",
+               function="Sub Function", const="True False", type_="Integer String")
+    rules = h.make_rules(kw, line_comment="'", ignore_case=True)
+    h.register_language("basic", rules, "BASIC", (".bas",))
+    api.build.register_build("basic", 'rcbasic "{file}"', (".bas",))
+
+EJEMPLO 3 - paquete de TEMAS (es el caso de tu "XelmoisX/Midnight")
+    mi-tema/
+      blinker-package.json   ->  {"name": "mi-tema", "version": "1.0.0",
+                                  "themes": ["themes/midnight.json"]}
+      themes/midnight.json   ->  formato de la seccion 3 (themes.py)
+Se instala igual (Packages > Install Package, o View > Install Theme...) y luego
+View > Select Theme...
+
+COMO FUNCIONA LA INSTALACION (packages.py)
+  1. parse_source acepta:  usuario/repo     usuario/repo@rama
+                           https://github.com/usuario/repo     .../tree/rama
+  2. Descarga el .zip del repo (github.com/.../archive/HEAD.zip). Limite 100 MB.
+  3. Lo descomprime en una carpeta temporal rechazando rutas peligrosas
+     ("../") y zips gigantes (300 MB descomprimido).
+  4. Lee el manifest, elige el nombre, lo mueve a Packages/<nombre>
+  5. Lo anota en Packages/packages.json (origen, version, fecha)
+  6. El editor llama a register(api) del main.py
+  Buscar paquetes: usa la API de GitHub con el topic "blinker-package". Si GitHub
+  te limita las peticiones, define la variable de entorno GITHUB_TOKEN.
+  Upgrade = reinstala desde el mismo origen. Remove = borra la carpeta.
+  OJO seguridad: un paquete ejecuta codigo Python con tus mismos permisos. El
+  editor te pregunta antes de instalar; instala solo de fuentes de confianza.
+
+
+=====================================================================
+ 7. DONDE PONER LINKS PREDETERMINADOS EN "INSTALL PACKAGE"
+=====================================================================
+Ya lo deje hecho en la version limpia.
+
+  Archivo:  main.py   linea 63      DEFAULT_PACKAGES
+
+    DEFAULT_PACKAGES = [
+        ("XelmoisX/Midnight", "Tema Midnight"),
+        # ("usuario/otro-paquete", "Lo que hace"),
+    ]
+
+Cada entrada es  ("usuario/repo", "descripcion corta").  Tambien sirve
+"usuario/repo@rama" o "usuario/repo@v1.2". Agrega tus lineas dentro de esa lista.
+
+Como se ven: aparecen SIEMPRE arriba en Packages > Install Package... (y en
+View > Install Theme..., que abre la misma lista), marcadas "(predeterminado)",
+y funcionan con el buscador: si escribes "mid" solo queda Midnight. Si el mismo
+paquete tambien viene en los resultados de GitHub no se repite. Las entradas
+predeterminadas aparecen incluso sin internet. Al elegir una, el editor pide
+confirmacion y lo instala igual que cualquier otro.
+
+Donde esta el codigo que las muestra: main.py, metodo install_package (~linea 3063).
+
+NO las pongas en Packages/packages.json: ese archivo es el REGISTRO de lo que
+ya esta instalado y lo reescribe el editor.
+
+Ejemplo de la lista con varios:
+    DEFAULT_PACKAGES = [
+        ("XelmoisX/Midnight",    "Tema Midnight"),
+        ("XelmoisX/mi-basic",    "Resaltado y autocompletado de BASIC"),
+        ("XelmoisX/sdl-cpp-practice@main", "Ejemplos de C++ con SDL2"),
+    ]
+(usa solo repos que existan en GitHub; estos son ejemplos del formato)
+
+
+=====================================================================
+ 8. QUE ELIMINE / CORREGI (y que deje a proposito)
+=====================================================================
+Tu zip original NO fue modificado. La version limpia esta en
+Blinker_Editor_limpio.zip. Comprobe que todo compila (py_compile) y que
+la salida de libs.py es identica a la de antes (32 de 32 elementos iguales).
+No pude abrir la interfaz porque en mi entorno no hay tkinter, asi que
+prueba una vez el editor despues de reemplazar.
+
+CODIGO REPETIDO ELIMINADO
+  main.py - CodeEditor.undo y redo eran casi identicos (99%):
+        ahora ambos usan un metodo _history("edit_undo"/"edit_redo").
+        (undo y redo siguen existiendo, el resto del programa no cambia)
+  libs.py - _item() construia el mismo diccionario de sugerencia que
+        suggest.py:_item(); ahora reutiliza el de suggest.py.
+  main.py - 2 imports que nunca se usaban:  scrolledtext (sctxt) e icon_key
+  main.py - metodo identity_lang(): no lo llamaba nadie
+
+ARCHIVOS SOBRANTES ELIMINADOS
+  Recovery/*.bak (2 archivos vacios e identicos) y Recovery/session.json:
+        datos temporales que el editor regenera. (session.json tenia tus rutas
+        personales C:\Users\Xelmo\...)
+  Packages/sdl-cpp-practice/__pycache__/main.cpython-315.pyc : bytecode generado
+  Libraries/Love2D/blinker-package.json : copia EXACTA de plantilla-para-libs.json
+        y nunca se cargaba (libs.py solo lee Libraries/*.json y Packages/*/)
+  icons/sql (2).png : copia suelta de sql.png
+
+REINICIADOS (datos personales / obsoletos)
+  blinker_config.json : estaba lleno de tus rutas recientes; quedo en blanco
+  Packages/packages.json : listaba "hello-package" que no existe en el zip; quedo {}
+
+ERRORES REALES CORREGIDOS
+  suggest_ui.py buscaba la carpeta "Icons/suggest" (con I mayuscula) pero la
+        carpeta real es "icons/suggest". En Windows funciona (no distingue
+        mayusculas); en Linux/macOS NO encontraba los iconos. Ahora dice "icons".
+  icons/icon_image.png : el editor busca image.png, asi que nunca se usaba.
+        Lo renombre a image.png.
+
+NUEVO
+  DEFAULT_PACKAGES (seccion 7).
+
+LO QUE DEJE A PROPOSITO (parece repetido pero no lo es)
+  fuzzy() en main.py vs match_positions() en suggest_ui.py: parecidas, pero una
+        da un PUNTAJE (para ordenar) y la otra las POSICIONES (para resaltar).
+  get_icon()/_fallback_icon() en suggest_ui.py vs IconSet en icons.py: cargan
+        PNG con la misma idea, pero manejan carpetas, tamanos y cache distintos.
+  _load_registry (packages.py), load_session (recovery.py), _read_json (libs.py)
+        y load_file (themes.py): leen un JSON, pero cada uno valida y avisa de
+        errores distinto. Se podria unir, pero el ahorro es poco y el riesgo no es cero.
+  plantilla-para-libs.json (raiz): es un manifest de ejemplo, no se carga solo;
+        lo deje como plantilla.
+
+
+=====================================================================
+ 9. RECOMENDACIONES PARA DESPUES
+=====================================================================
+ 1. main.py tiene 3230 lineas y 8 clases. Si quieres mantenerlo mas facil, el
+    corte natural es: terminal.py (Terminal), editor.py (CodeEditor, FindBar,
+    LineNumbers), filetree.py (FileTree, Palette). Cada clase ya es bastante
+    independiente.
+ 2. Agrega un .gitignore a la raiz con:  __pycache__/  Recovery/  blinker_config.json
+    para no volver a subir datos personales ni archivos temporales.
+ 3. Si el editor se va a usar en Linux/macOS, revisa los nombres de icons/: los
+    que faltan (header, text, log, config, archive, pdf) usan el dibujo de relleno.
+ 4. El comentario de lsp.py dice que puedes cambiar servidores con
+    "lsp_servers" en blinker_config.json (ejemplo: {"python": ["pylsp"]}).
+=====================================================================
+
+=====================================================================
+ 10. NUEVO: INSTALAR LIBS DESDE GITHUB (Tools > Install Library...)
+=====================================================================
+Tambien en la paleta (Ctrl+Shift+P): "Libraries: Install Library".
+
+Que puedes escribir en la caja:
+  usuario/repo/ruta/libreria.json            (rama por defecto)
+  usuario/repo/ruta/libreria.json@rama
+  https://github.com/usuario/repo/blob/rama/ruta/libreria.json   (link normal del navegador)
+  https://raw.githubusercontent.com/usuario/repo/rama/ruta/libreria.json
+  usuario/repo   -> se instala como PAQUETE; sirve si su blinker-package.json trae "libraries"
+
+Que pasa: descarga el .json (max 2 MB), lo VALIDA con el mismo formato de la
+seccion 5 (si esta mal lo rechaza y no guarda nada), lo guarda en Libraries/
+con "source" anotado, y recarga las libs solo. Reinstalar la misma = actualizar.
+Una lib es solo datos, no ejecuta codigo (por eso la confirmacion es mas simple
+que la de los paquetes).
+
+LIBS PREDETERMINADAS: main.py, lista DEFAULT_LIBRARIES (junto a DEFAULT_PACKAGES):
+
+    DEFAULT_LIBRARIES = [
+        ("usuario/repo/libs/rcbasic.json", "Autocompletado de RCBasic"),
+        ("usuario/repo/libs/love2d.json@main", "Funciones de Love2D"),
+    ]
+
+Salen siempre en la lista de Install Library, con el buscador, marcadas
+"(predeterminada)". Viene vacia: agrega tus repos reales (los de ejemplo no existen).
+Tambien puedes empaquetar libs en un repo con blinker-package.json y
+"libraries": ["libs/x.json"], y ponerlo en DEFAULT_PACKAGES.
+
+Probado sin internet (descarga simulada): los formatos de link, el guardado,
+la carga posterior y el rechazo de JSON invalido o con formato incorrecto.
+La descarga real de GitHub no la pude probar desde mi entorno.

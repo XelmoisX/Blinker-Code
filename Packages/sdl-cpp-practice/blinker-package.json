@@ -1,0 +1,7 @@
+{
+    "name": "sdl-cpp-practice",
+    "version": "1.0.0",
+    "description": "Ejemplos de C++ con SDL2 + comando para compilarlos y ejecutarlos",
+    "author": "tu-usuario",
+    "main": "main.py"
+}

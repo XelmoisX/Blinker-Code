@@ -1,0 +1,21 @@
+{
+    "name": "Mi BASIC",
+    "languages": ["basic"],
+    "extensions": [".bas"],
+    "comment": "'",
+    "keywords": ["If", "Then", "Else", "ElseIf", "For", "To", "Step", "Next", "While", "Wend",
+                 "Do", "Loop", "Until", "Function", "Sub", "End", "Return", "Dim", "As", "Exit"],
+    "constants": ["True", "False"],
+    "types": ["Integer", "String", "Number"],
+    "functions": [
+        "OpenWindow(title, w, h, fullscreen, vsync) = OpenWindow(\"Hola\", 640, 480, 0, 0) # Abre una ventana",
+        "CloseWindow()",
+        "Cls",
+        {"name": "Wait", "params": ["ms"], "doc": "Pausa en milisegundos", "insert": "Wait(1000)"}
+    ],
+    "snippets": [
+        {"trigger": "forn",   "body": "For i = 1 To $0\n\t\nNext", "detail": "Bucle For"},
+        {"trigger": "ifthen", "body": "If $0 Then\n\t\nEnd If",  "detail": "If ... Then"},
+        {"trigger": "whilew", "body": "While $0\n\t\nWend",      "detail": "While ... Wend"}
+    ]
+}

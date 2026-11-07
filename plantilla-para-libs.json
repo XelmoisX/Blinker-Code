@@ -1,0 +1,7 @@
+{
+    "name": "basic-lib",
+    "version": "0.1.0",
+    "description": "Plantilla de autocompletado para un BASIC (completa las funciones de tu libreria)",
+    "author": "tu nombre",
+    "libraries": ["libs/basic.json"]
+}

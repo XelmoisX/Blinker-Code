@@ -1,0 +1,7 @@
+{
+    "name": "hello-package",
+    "version": "1.0.0",
+    "description": "Ejemplo: inserta la fecha de hoy y saluda",
+    "author": "tu nombre",
+    "main": "main.py"
+}
